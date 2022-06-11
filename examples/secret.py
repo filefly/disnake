@@ -1,3 +1,4 @@
+import os
 import typing
 
 import disnake
@@ -93,4 +94,4 @@ async def emoji(ctx: commands.GuildContext, emoji: disnake.PartialEmoji, *roles:
     )
 
 
-bot.run("token")
+bot.run(os.getenv("BOT_TOKEN"))
