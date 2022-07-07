@@ -33,16 +33,19 @@ from typing import (
     Callable,
     ClassVar,
     Dict,
+    Generic,
     Iterator,
     List,
     Optional,
     Tuple,
     Type,
     TypeVar,
+    Union,
     overload,
 )
 
 from .enums import UserFlags
+from .utils import MISSING
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -59,15 +62,21 @@ __all__ = (
 )
 
 BF = TypeVar("BF", bound="BaseFlags")
+T = TypeVar("T", bound="BaseFlags")
 
 
-class flag_value:
+class flag_value(Generic[T]):
     def __init__(self, func: Callable[[Any], int]):
         self.flag = func(None)
         self.__doc__ = func.__doc__
+        self._parent: Type[T] = MISSING
+
+    def __or__(self, other: flag_value[T]) -> T:
+        assert self._parent is other._parent  # noqa: S101
+        return self._parent._from_value(self.flag | other.flag)
 
     @overload
-    def __get__(self, instance: None, owner: Type[BF]) -> Self:
+    def __get__(self, instance: None, owner: Type[BF]) -> flag_value[BF]:
         ...
 
     @overload
@@ -92,11 +101,11 @@ class alias_flag_value(flag_value):
 
 def fill_with_flags(*, inverted: bool = False):
     def decorator(cls: Type[BF]) -> Type[BF]:
-        cls.VALID_FLAGS = {
-            name: value.flag
-            for name, value in cls.__dict__.items()
-            if isinstance(value, flag_value)
-        }
+        cls.VALID_FLAGS = {}
+        for name, value in cls.__dict__.items():
+            if isinstance(value, flag_value):
+                value._parent = cls
+                cls.VALID_FLAGS[name] = value.flag
 
         if inverted:
             max_bits = max(cls.VALID_FLAGS.values()).bit_length()
@@ -144,7 +153,10 @@ class BaseFlags:
         self.value &= other.value
         return self
 
-    def __or__(self, other: Self) -> Self:
+    def __or__(self, other: Union[Self, flag_value[Self]]) -> Self:
+        if isinstance(other, flag_value):
+            assert type(self) is other._parent  # noqa: S101
+            return self._from_value(self.value | other.flag)
         return self._from_value(self.value | other.value)
 
     def __ior__(self, other: Self) -> Self:
@@ -152,9 +164,16 @@ class BaseFlags:
         return self
 
     def __xor__(self, other: Self) -> Self:
+        if isinstance(other, flag_value):
+            assert type(self) is other._parent  # noqa: S101
+            return self._from_value(self.value ^ other.flag)
         return self._from_value(self.value ^ other.value)
 
-    def __ixor__(self, other: Self) -> Self:
+    def __ixor__(self, other: Union[Self, flag_value[Self]]) -> Self:
+        if isinstance(other, flag_value):
+            assert type(self) is other._parent  # noqa: S101
+            self.value ^= other.flag
+            return self
         self.value ^= other.value
         return self
 
@@ -231,6 +250,8 @@ class SystemChannelFlags(BaseFlags):
         .. describe:: x != y
 
             Checks if two flags are not equal.
+        .. example:: h
+            h
         .. describe:: x | y, x |= y
 
             Returns a new SystemChannelFlags with all enabled flags from both x and y.
